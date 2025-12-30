@@ -1,0 +1,38 @@
+{
+  "name": "my-vscode-extension",
+  "displayName": "My VSCode Extension",
+  "description": "A VS Code extension with Vue3 Webview",
+  "version": "0.0.1",
+  "publisher": "my-publisher",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension/index.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "my-extension.open",
+        "title": "Open My Webview"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build:ext && npm run build:web",
+    "build:ext": "tsc -p tsconfig.json",
+    "build:web": "cd webview && npm run build",
+    "watch:ext": "tsc -watch -p tsconfig.json",
+    "dev:web": "cd webview && npm run dev",
+    "compile": "npm run build:ext",
+    "pretest": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
