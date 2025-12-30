@@ -193,14 +193,17 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case MessageTypes.STOP_SERVER:
+        console.log('Received STOP_SERVER message');
         try {
           await this._apiServer.stop();
+          console.log('API Server stopped successfully');
           vscode.window.showInformationMessage('API Server stopped');
           this.postMessage({
             type: MessageTypes.SERVER_STATUS,
             payload: this._apiServer.getStatus() as ServerStatusPayload,
           });
         } catch (error) {
+          console.error('Failed to stop server:', error);
           const errorMessage = error instanceof Error ? error.message : 'Failed to stop server';
           vscode.window.showErrorMessage(errorMessage);
         }

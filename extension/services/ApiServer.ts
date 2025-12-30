@@ -197,16 +197,28 @@ export class ApiServer {
   private async handleOpenAIChatCompletion(req: http.IncomingMessage, res: http.ServerResponse) {
     const body = await this.parseBody<OpenAIChatCompletionRequest>(req);
     
+    console.log(`[API] OpenAI Chat Completion request - requested model: ${body.model}, stream: ${body.stream}`);
+    
     if (!body.messages || body.messages.length === 0) {
       this.sendError(res, 400, 'messages is required', 'invalid_request_error');
       return;
     }
 
     const selectedModel = this.copilotService.getSelectedModel();
-    if (!selectedModel) {
-      this.sendError(res, 400, 'No model selected', 'invalid_request_error');
+    const requestedModelId = (body.model ?? '').trim();
+    const effectiveModelId = requestedModelId || selectedModel?.id;
+
+    if (!effectiveModelId) {
+      this.sendError(
+        res,
+        400,
+        'No model specified. Provide "model" in the request body or select a model in the AI Omni sidebar.',
+        'invalid_request_error'
+      );
       return;
     }
+
+    console.log(`[API] Using Copilot model: ${effectiveModelId}`);
 
     // 转换消息格式
     const messages = this.convertOpenAIMessages(body.messages);
@@ -223,12 +235,12 @@ export class ApiServer {
       const created = Math.floor(Date.now() / 1000);
 
       try {
-        await this.copilotService.streamChat(messages, (text: string, done: boolean) => {
+        await this.copilotService.streamChatWithModelId(effectiveModelId, messages, (text: string, done: boolean) => {
           const chunk: OpenAIChatCompletionChunk = {
             id: responseId,
             object: 'chat.completion.chunk',
             created,
-            model: body.model || selectedModel.id,
+            model: effectiveModelId, // 始终返回实际使用的模型
             choices: [{
               index: 0,
               delta: done ? {} : { content: text },
@@ -243,19 +255,34 @@ export class ApiServer {
           }
         });
       } catch (error) {
-        console.error('Stream error:', error);
+        console.error('[API] Stream error:', error);
+        // 尝试发送错误信息
+        const errorMessage = error instanceof Error ? error.message : 'Stream failed';
+        const errorChunk = {
+          id: responseId,
+          object: 'chat.completion.chunk',
+          created,
+          model: effectiveModelId,
+          choices: [{
+            index: 0,
+            delta: { content: `\n\n[Error: ${errorMessage}]` },
+            finish_reason: 'stop',
+          }],
+        };
+        this.sendSSE(res, 'data', errorChunk);
+        res.write('data: [DONE]\n\n');
         res.end();
       }
     } else {
       // 非流式响应
       try {
-        const responseText = await this.copilotService.chat(messages);
+        const responseText = await this.copilotService.chatWithModelId(effectiveModelId, messages);
         
         const response: OpenAIChatCompletionResponse = {
           id: this.generateId('chatcmpl'),
           object: 'chat.completion',
           created: Math.floor(Date.now() / 1000),
-          model: body.model || selectedModel.id,
+          model: effectiveModelId, // 始终返回实际使用的模型
           choices: [{
             index: 0,
             message: {
@@ -272,9 +299,24 @@ export class ApiServer {
         };
         response.usage.total_tokens = response.usage.prompt_tokens + response.usage.completion_tokens;
 
+        console.log(`[API] Chat completion success, response length: ${responseText.length}`);
         this.sendJson(res, response);
       } catch (error) {
-        this.sendError(res, 500, error instanceof Error ? error.message : 'Chat completion failed', 'internal_error');
+        console.error('[API] Chat completion error:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Chat completion failed';
+        const lower = errorMessage.toLowerCase();
+        if (lower.includes('model_not_supported') || lower.includes('requested model is not supported')) {
+          this.sendError(
+            res,
+            400,
+            `The requested model is not supported by your Copilot account right now: "${effectiveModelId}". ` +
+              `This is usually an entitlement/rollout/region limitation in GitHub Copilot, not an AI Omni issue. ` +
+              `Try "gpt-4o" or check Copilot plan/settings. Original error: ${errorMessage}`,
+            'invalid_request_error'
+          );
+          return;
+        }
+        this.sendError(res, 500, errorMessage, 'internal_error');
       }
     }
   }
@@ -304,16 +346,28 @@ export class ApiServer {
   private async handleAnthropicMessages(req: http.IncomingMessage, res: http.ServerResponse) {
     const body = await this.parseBody<AnthropicMessageRequest>(req);
     
+    console.log(`[API] Anthropic Messages request - requested model: ${body.model}, stream: ${body.stream}`);
+    
     if (!body.messages || body.messages.length === 0) {
       this.sendError(res, 400, 'messages is required', 'invalid_request_error');
       return;
     }
 
     const selectedModel = this.copilotService.getSelectedModel();
-    if (!selectedModel) {
-      this.sendError(res, 400, 'No model selected', 'invalid_request_error');
+    const requestedModelId = (body.model ?? '').trim();
+    const effectiveModelId = requestedModelId || selectedModel?.id;
+
+    if (!effectiveModelId) {
+      this.sendError(
+        res,
+        400,
+        'No model specified. Provide "model" in the request body or select a model in the AI Omni sidebar.',
+        'invalid_request_error'
+      );
       return;
     }
+
+    console.log(`[API] Using Copilot model: ${effectiveModelId}`);
 
     // 转换消息格式
     const messages = this.convertAnthropicMessages(body.messages, body.system);
@@ -338,7 +392,7 @@ export class ApiServer {
             type: 'message',
             role: 'assistant',
             content: [],
-            model: body.model || selectedModel.id,
+            model: effectiveModelId, // 始终返回实际使用的模型
             stop_reason: null,
             stop_sequence: null,
             usage: { input_tokens: this.estimateTokens(messages.map(m => m.content).join('')), output_tokens: 0 },
@@ -354,7 +408,7 @@ export class ApiServer {
         };
         this.sendSSE(res, 'event', blockStart);
 
-        await this.copilotService.streamChat(messages, (text: string, done: boolean) => {
+        await this.copilotService.streamChatWithModelId(effectiveModelId, messages, (text: string, done: boolean) => {
           if (!done && text) {
             const delta: AnthropicStreamEvent = {
               type: 'content_block_delta',
@@ -397,14 +451,14 @@ export class ApiServer {
     } else {
       // 非流式响应
       try {
-        const responseText = await this.copilotService.chat(messages);
+        const responseText = await this.copilotService.chatWithModelId(effectiveModelId, messages);
         
         const response: AnthropicMessageResponse = {
           id: this.generateId('msg'),
           type: 'message',
           role: 'assistant',
           content: [{ type: 'text', text: responseText }],
-          model: body.model || selectedModel.id,
+          model: effectiveModelId, // 始终返回实际使用的模型
           stop_reason: 'end_turn',
           stop_sequence: null,
           usage: {
@@ -413,9 +467,24 @@ export class ApiServer {
           },
         };
 
+        console.log(`[API] Anthropic message success, response length: ${responseText.length}`);
         this.sendJson(res, response);
       } catch (error) {
-        this.sendError(res, 500, error instanceof Error ? error.message : 'Message creation failed', 'internal_error');
+        console.error('[API] Anthropic message error:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Message creation failed';
+        const lower = errorMessage.toLowerCase();
+        if (lower.includes('model_not_supported') || lower.includes('requested model is not supported')) {
+          this.sendError(
+            res,
+            400,
+            `The requested model is not supported by your Copilot account right now: "${effectiveModelId}". ` +
+              `This is usually an entitlement/rollout/region limitation in GitHub Copilot, not an AI Omni issue. ` +
+              `Try "gpt-4o" or check Copilot plan/settings. Original error: ${errorMessage}`,
+            'invalid_request_error'
+          );
+          return;
+        }
+        this.sendError(res, 500, errorMessage, 'internal_error');
       }
     }
   }

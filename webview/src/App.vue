@@ -28,7 +28,11 @@
           <option value="" disabled>
             {{ models.length === 0 ? '加载模型中...' : '请选择模型' }}
           </option>
-          <option v-for="model in models" :key="model.id" :value="model.id">
+          <option 
+            v-for="model in models" 
+            :key="model.id" 
+            :value="model.id"
+          >
             {{ model.name }} ({{ model.vendor }})
           </option>
         </select>
@@ -36,6 +40,7 @@
       <div v-if="selectedModel" class="model-info">
         <p><strong>ID:</strong> {{ selectedModel.id }}</p>
         <p><strong>厂商:</strong> {{ selectedModel.vendor }}</p>
+        <p><strong>Family:</strong> {{ selectedModel.family }}</p>
         <p><strong>最大输入:</strong> {{ selectedModel.maxInputTokens }} tokens</p>
         <p><strong>最大输出:</strong> {{ selectedModel.maxOutputTokens }} tokens</p>
       </div>
@@ -354,6 +359,34 @@ h1 {
   margin: 4px 0;
   font-size: 12px;
   color: var(--vscode-foreground);
+}
+
+.model-info .warning {
+  color: var(--vscode-editorWarning-foreground);
+  margin-top: 8px;
+}
+
+.filter-group {
+  margin-bottom: 12px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  margin: 8px 0;
 }
 
 .button-group {

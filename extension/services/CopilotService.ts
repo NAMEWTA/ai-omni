@@ -5,7 +5,8 @@ import { CopilotModel } from '../../shared/types/api';
  * Copilot 服务 - 集成 VS Code 语言模型 API
  */
 export class CopilotService {
-  private selectedModel: vscode.LanguageModelChat | null = null;
+  private selectedModelId: string | null = null;
+  private selectedModelVendor: string | null = null;
   private models: vscode.LanguageModelChat[] = [];
   private modelChangeCallback?: (models: CopilotModel[]) => void;
 
@@ -44,9 +45,8 @@ export class CopilotService {
    * 获取模型列表
    */
   public async getModels(): Promise<CopilotModel[]> {
-    if (this.models.length === 0) {
-      await this.initialize();
-    }
+    // 每次都重新获取最新的模型列表
+    this.models = await vscode.lm.selectChatModels();
     return this.convertModels();
   }
 
@@ -54,10 +54,13 @@ export class CopilotService {
    * 选择模型
    */
   public async selectModel(modelId: string): Promise<boolean> {
+    // 确保使用最新的模型列表（避免缓存过期）
+    this.models = await vscode.lm.selectChatModels();
     const model = this.models.find(m => m.id === modelId);
     if (model) {
-      this.selectedModel = model;
-      console.log(`Selected model: ${modelId}`);
+      this.selectedModelId = model.id;
+      this.selectedModelVendor = model.vendor;
+      console.log(`Selected model: ${modelId} (vendor: ${model.vendor})`);
       return true;
     }
     console.error(`Model not found: ${modelId}`);
@@ -65,30 +68,63 @@ export class CopilotService {
   }
 
   /**
-   * 获取当前选中的模型
+   * 获取当前选中的模型信息
    */
   public getSelectedModel(): CopilotModel | null {
-    if (!this.selectedModel) {
+    if (!this.selectedModelId) {
       return null;
     }
-    return this.convertModel(this.selectedModel);
+    const model = this.models.find(m => m.id === this.selectedModelId);
+    if (!model) {
+      return null;
+    }
+    return this.convertModel(model);
   }
 
   /**
-   * 进行对话（非流式）
+   * 动态获取模型实例（每次调用时获取最新的引用）
    */
-  public async chat(messages: Array<{ role: string; content: string }>): Promise<string> {
-    if (!this.selectedModel) {
+  private async getModelInstance(): Promise<vscode.LanguageModelChat> {
+    if (!this.selectedModelId) {
       throw new Error('No model selected');
     }
 
-    console.log(`Sending chat request to model: ${this.selectedModel.id}`);
+    return this.getModelInstanceById(this.selectedModelId, this.selectedModelVendor ?? undefined);
+  }
+
+  private async getModelInstanceById(modelId: string, vendorHint?: string): Promise<vscode.LanguageModelChat> {
+    const models = await vscode.lm.selectChatModels({ id: modelId });
+    if (models.length > 0) {
+      return models[0];
+    }
+
+    // 少数情况下 id 选择不到，尝试 vendor 作为兜底（参考用户给的 vendor 筛选实现）
+    if (vendorHint) {
+      const vendorModels = await vscode.lm.selectChatModels({ vendor: vendorHint });
+      const model = vendorModels.find(m => m.id === modelId);
+      if (model) {
+        return model;
+      }
+    }
+
+    throw new Error(`Model "${modelId}" not found or not available`);
+  }
+
+  /**
+   * 按请求指定模型进行对话（非流式）
+   */
+  public async chatWithModelId(
+    modelId: string,
+    messages: Array<{ role: string; content: string }>
+  ): Promise<string> {
+    const model = await this.getModelInstanceById(modelId);
+    console.log(`Sending chat request to model: ${model.id} (vendor: ${model.vendor}, family: ${model.family})`);
     const chatMessages = this.convertToChatMessages(messages);
-    
+
     try {
-      const response = await this.selectedModel.sendRequest(
+      const response = await model.sendRequest(
         chatMessages,
-        {},
+        { justification: 'AI Omni API request' },
         new vscode.CancellationTokenSource().token
       );
 
@@ -98,14 +134,85 @@ export class CopilotService {
       }
       return result;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`Chat error with model ${this.selectedModel.id}:`, errorMessage);
-      
-      // 提供更友好的错误信息
-      if (errorMessage.includes('model_not_supported') || errorMessage.includes('not supported')) {
-        throw new Error(`Model "${this.selectedModel.id}" does not support chat requests. Please select a different model like gpt-4o or claude-sonnet-4.`);
+      if (error instanceof vscode.LanguageModelError) {
+        console.error(`LanguageModelError: ${error.message}, code: ${error.code}`);
+        throw new Error(`Model error (${error.code}): ${error.message}`);
       }
-      throw error;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Chat error with model ${model.id}:`, errorMessage);
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * 按请求指定模型进行对话（流式）
+   */
+  public async streamChatWithModelId(
+    modelId: string,
+    messages: Array<{ role: string; content: string }>,
+    onChunk: (text: string, done: boolean) => void
+  ): Promise<void> {
+    const model = await this.getModelInstanceById(modelId);
+    console.log(`Sending stream chat request to model: ${model.id} (vendor: ${model.vendor}, family: ${model.family})`);
+    const chatMessages = this.convertToChatMessages(messages);
+
+    try {
+      const response = await model.sendRequest(
+        chatMessages,
+        { justification: 'AI Omni API request' },
+        new vscode.CancellationTokenSource().token
+      );
+
+      for await (const fragment of response.text) {
+        onChunk(fragment, false);
+      }
+      onChunk('', true);
+    } catch (error: unknown) {
+      onChunk('', true);
+      if (error instanceof vscode.LanguageModelError) {
+        console.error(`LanguageModelError: ${error.message}, code: ${error.code}`);
+        throw new Error(`Model error (${error.code}): ${error.message}`);
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Stream chat error with model ${model.id}:`, errorMessage);
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * 进行对话（非流式）
+   */
+  public async chat(messages: Array<{ role: string; content: string }>): Promise<string> {
+    // 每次调用时动态获取模型实例
+    const model = await this.getModelInstance();
+
+    console.log(`Sending chat request to model: ${model.id} (vendor: ${model.vendor}, family: ${model.family})`);
+    const chatMessages = this.convertToChatMessages(messages);
+    
+    try {
+      const response = await model.sendRequest(
+        chatMessages,
+        {
+          justification: 'AI Omni API request'
+        },
+        new vscode.CancellationTokenSource().token
+      );
+
+      let result = '';
+      for await (const fragment of response.text) {
+        result += fragment;
+      }
+      return result;
+    } catch (error: unknown) {
+      // 处理 VS Code 语言模型错误
+      if (error instanceof vscode.LanguageModelError) {
+        console.error(`LanguageModelError: ${error.message}, code: ${error.code}`);
+        throw new Error(`Model error (${error.code}): ${error.message}`);
+      }
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Chat error with model ${model.id}:`, errorMessage);
+      throw new Error(errorMessage);
     }
   }
 
@@ -116,17 +223,18 @@ export class CopilotService {
     messages: Array<{ role: string; content: string }>,
     onChunk: (text: string, done: boolean) => void
   ): Promise<void> {
-    if (!this.selectedModel) {
-      throw new Error('No model selected');
-    }
+    // 每次调用时动态获取模型实例
+    const model = await this.getModelInstance();
 
-    console.log(`Sending stream chat request to model: ${this.selectedModel.id}`);
+    console.log(`Sending stream chat request to model: ${model.id} (vendor: ${model.vendor}, family: ${model.family})`);
     const chatMessages = this.convertToChatMessages(messages);
 
     try {
-      const response = await this.selectedModel.sendRequest(
+      const response = await model.sendRequest(
         chatMessages,
-        {},
+        {
+          justification: 'AI Omni API request'
+        },
         new vscode.CancellationTokenSource().token
       );
 
@@ -135,15 +243,17 @@ export class CopilotService {
       }
       onChunk('', true);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`Stream chat error with model ${this.selectedModel.id}:`, errorMessage);
       onChunk('', true);
       
-      // 提供更友好的错误信息
-      if (errorMessage.includes('model_not_supported') || errorMessage.includes('not supported')) {
-        throw new Error(`Model "${this.selectedModel.id}" does not support chat requests. Please select a different model like gpt-4o or claude-sonnet-4.`);
+      // 处理 VS Code 语言模型错误
+      if (error instanceof vscode.LanguageModelError) {
+        console.error(`LanguageModelError: ${error.message}, code: ${error.code}`);
+        throw new Error(`Model error (${error.code}): ${error.message}`);
       }
-      throw error;
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Stream chat error with model ${model.id}:`, errorMessage);
+      throw new Error(errorMessage);
     }
   }
 
@@ -190,7 +300,8 @@ export class CopilotService {
    * 清理资源
    */
   public dispose() {
-    this.selectedModel = null;
+    this.selectedModelId = null;
+    this.selectedModelVendor = null;
     this.models = [];
   }
 }
