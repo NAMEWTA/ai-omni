@@ -64,7 +64,7 @@ export class WebviewPanel {
         // Send response back to webview
         this._panel.webview.postMessage({
           type: 'pong',
-          payload: 'Hello from extension!'
+          payload: 'Hello from extension AAAAA !'
         });
         break;
       case 'showInfo':
