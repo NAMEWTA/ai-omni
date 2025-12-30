@@ -1,0 +1,1 @@
+{"root":["./src/main.ts","./src/vite-env.d.ts","./src/api/vscode.ts","./src/app.vue","../shared/constants/index.ts","../shared/types/index.ts","../shared/types/message.ts"],"version":"5.9.3"}
