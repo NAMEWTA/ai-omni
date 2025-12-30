@@ -1,24 +1,98 @@
 {
-  "name": "my-vscode-extension",
-  "displayName": "My VSCode Extension",
-  "description": "A VS Code extension with Vue3 Webview",
+  "name": "ai-omni",
+  "displayName": "AI Omni",
+  "description": "A VS Code extension that provides OpenAI/Anthropic compatible API by forwarding requests to GitHub Copilot",
   "version": "0.0.1",
-  "publisher": "my-publisher",
+  "publisher": "ai-omni",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning"
   ],
+  "keywords": [
+    "copilot",
+    "openai",
+    "anthropic",
+    "api",
+    "ai"
+  ],
+  "icon": "resources/icon.png",
   "activationEvents": [],
   "main": "./dist/extension/index.js",
   "contributes": {
     "commands": [
       {
         "command": "my-extension.open",
-        "title": "Open My Webview"
+        "title": "Open My Webview",
+        "icon": "$(window)"
+      },
+      {
+        "command": "aiOmni.refreshSidebar",
+        "title": "Refresh Models",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "aiOmni.startServer",
+        "title": "AI Omni: Start API Server",
+        "icon": "$(play)"
+      },
+      {
+        "command": "aiOmni.stopServer",
+        "title": "AI Omni: Stop API Server",
+        "icon": "$(debug-stop)"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiOmniContainer",
+          "title": "AI Omni",
+          "icon": "resources/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiOmniContainer": [
+        {
+          "type": "webview",
+          "id": "aiOmni.sidebarView",
+          "name": "AI Omni",
+          "icon": "$(sparkle)",
+          "contextualTitle": "AI Omni"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "my-extension.open",
+          "when": "view == aiOmni.sidebarView",
+          "group": "navigation"
+        },
+        {
+          "command": "aiOmni.refreshSidebar",
+          "when": "view == aiOmni.sidebarView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Omni",
+      "properties": {
+        "aiOmni.defaultPort": {
+          "type": "number",
+          "default": 11435,
+          "description": "Default port for the API server"
+        },
+        "aiOmni.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start the API server when VS Code opens"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
